@@ -6,6 +6,13 @@ https://www.youtube.com/watch?v=d03xg2PKOPg
 https://github.com/ryanhay/ocp4-metal-install
 ```
 
+```text
+Differences
+OCP 4.5? 4.9? -> 4.13.5
+
+ocp-svc.ocp.lan has second disk on /data1 for ocp storage
+```
+
 - [OpenShift 4 Bare Metal Install - User Provisioned Infrastructure (UPI)](#openshift-4-bare-metal-install---user-provisioned-infrastructure-upi)
   - [Architecture Diagram](#architecture-diagram)
   - [Download Software](#download-software)
@@ -41,6 +48,30 @@ https://github.com/ryanhay/ocp4-metal-install
    - Red Hat Enterprise Linux CoreOS (RHCOS)
      - rhcos-X.X.X-x86_64-metal.x86_64.raw.gz
      - rhcos-X.X.X-x86_64-installer.x86_64.iso (or rhcos-X.X.X-x86_64-live.x86_64.iso for newer versions)
+
+```text
+How it is today
+
+On https://console.redhat.com/openshift/
+Clusters
+Cloud -> cloud providers
+Datacenter -> Run Agent-based Installer locally
+Red Hat OpenShift Local -> old Cloud Ready Containers (crc) "laptop edition"
+
+Run Agent-based Installer locally
+Install OpenShift on Bare Metal locally with Agent
+OpenShift installer -> openshift-install-linux.tar.gz
+Download pull secret -> pull-secret
+Command line interface -> openshift-install-linux.tar.gz
+
+Go to
+https://mirror.openshift.com/pub/openshift-v4/dependencies/rhcos/latest/
+Currently 13.5
+No rhcos-4.5.6-x86_64-installer.x86_64.iso
+download
+https://mirror.openshift.com/pub/openshift-v4/dependencies/rhcos/4.13/4.13.5/rhcos-4.13.5-x86_64-metal.x86_64.raw.gz
+https://mirror.openshift.com/pub/openshift-v4/dependencies/rhcos/4.13/4.13.5/rhcos-4.13.5-x86_64-live.x86_64.iso
+```
 
 ## Prepare the 'Bare Metal' environment
 
@@ -119,6 +150,11 @@ https://github.com/ryanhay/ocp4-metal-install
    oc version
    ```
 
+   ```text
+   Note:
+   kubectl is a link to oc
+   ```
+
 1. Extract the OpenShift Installer
 
    ```bash
@@ -169,6 +205,16 @@ https://github.com/ryanhay/ocp4-metal-install
 
    > If changes arent applied automatically you can bounce the NIC with `nmcli connection down ens224` and `nmcli connection up ens224`
 
+```bash
+nmcli con modify ens224 ipv4.addresses 192.168.22.1
+nmcli con modify ens224 ipv4.method manual
+nmcli con modify ens224 ipv4.dns-search ocp.lan
+nmcli con modify ens224 ipv4.never-default yes
+nmcli con modify ens224 connection.autoconnect yes
+nmcli connection down ens224
+nmcli connection up ens224
+```
+
 1. Setup firewalld
 
    Create **internal** and **external** zones
@@ -211,6 +257,21 @@ https://github.com/ryanhay/ocp4-metal-install
    ```bash
    cat /proc/sys/net/ipv4/ip_forward
    ```
+
+```bash
+# Quick settings
+nmcli connection modify ens224 connection.zone internal
+nmcli connection modify ens192 connection.zone external
+firewall-cmd --zone=external --add-masquerade --permanent
+firewall-cmd --zone=internal --add-masquerade --permanent
+firewall-cmd --reload
+
+# Check
+firewall-cmd --get-active-zones
+firewall-cmd --list-all --zone=internal
+firewall-cmd --list-all --zone=external
+cat /proc/sys/net/ipv4/ip_forward
+```
 
 1. Install and configure BIND DNS
 
@@ -266,6 +327,41 @@ https://github.com/ryanhay/ocp4-metal-install
    dig -x 192.168.22.200
    ```
 
+```bash
+# Quick settings
+dnf install bind bind-utils -y
+
+mv /etc/named.conf /etc/named.conf.orig
+cp /home/localsysadmin/ocp4-metal-install-rh/dns/named.conf /etc/named.conf
+chmod -v 0660 /etc/named.conf
+chown -v root:named /etc/named.conf
+
+cp -Rv /home/localsysadmin/ocp4-metal-install-rh/dns/zones /etc/named/
+chmod -v 0770 /etc/named/zones
+chmod -v 0660 /etc/named/zones/db.ocp.lan
+chmod -v 0660 /etc/named/zones/db.reverse
+chown -v root:named /etc/named/zones
+chown -v root:named /etc/named/zones/db.ocp.lan
+chown -v root:named /etc/named/zones/db.reverse
+
+firewall-cmd --add-port=53/udp --add-port=53/tcp --zone=internal --permanent
+firewall-cmd --reload
+
+systemctl enable --now named
+
+nmcli con modify ens192 ipv4.dns ""
+nmcli con modify ens192 ipv4.dns 127.0.0.1
+nmcli con modify ens192 ipv4.ignore-auto-dns yes
+nmcli device reapply ens192
+
+# Check
+systemctl status named
+
+dig ocp.lan
+# Should return ocp-bootstrap.lab.ocp.lan
+dig -x 192.168.22.200
+```
+
 1. Install & configure DHCP
 
    Install the DHCP Server
@@ -294,6 +390,24 @@ https://github.com/ryanhay/ocp4-metal-install
    systemctl start dhcpd
    systemctl status dhcpd
    ```
+
+```bash
+# Quick settings
+dnf install dhcp-server -y
+
+mv /etc/dhcp/dhcpd.conf /etc/dhcp/dhcpd.conf.orig
+cp -v /home/localsysadmin/ocp4-metal-install-rh/dhcpd.conf /etc/dhcp/dhcpd.conf
+chmod -v 0644 /etc/dhcp/dhcpd.conf
+chown -v root:root /etc/dhcp/dhcpd.conf
+
+firewall-cmd --add-service=dhcp --zone=internal --permanent
+firewall-cmd --reload
+
+systemctl enable --now dhcpd
+
+# Check
+systemctl status dhcpd
+```
 
 1. Install & configure Apache Web Server
 
@@ -329,6 +443,22 @@ https://github.com/ryanhay/ocp4-metal-install
    ```bash
    curl localhost:8080
    ```
+
+```bash
+# Quick settings
+dnf install httpd -y
+
+sed -i 's/Listen 80/Listen 0.0.0.0:8080/' /etc/httpd/conf/httpd.conf
+
+firewall-cmd --add-port=8080/tcp --zone=internal --permanent
+firewall-cmd --reload
+
+systemctl enable --now httpd
+
+# Check
+systemctl status httpd
+curl localhost:8080
+```
 
 1. Install & configure HAProxy
 
@@ -368,6 +498,34 @@ https://github.com/ryanhay/ocp4-metal-install
    systemctl start haproxy
    systemctl status haproxy
    ```
+
+```bash
+# Quick settings
+dnf install haproxy -y
+
+mv /etc/haproxy/haproxy.cfg /etc/haproxy/haproxy.cfg.orig
+cp -v /home/localsysadmin/ocp4-metal-install-rh/haproxy.cfg /etc/haproxy/haproxy.cfg
+chmod -v 0644 /etc/haproxy/haproxy.cfg
+chown -v root:root /etc/haproxy/haproxy.cfg
+
+firewall-cmd --add-port=6443/tcp --zone=internal --permanent # kube-api-server on control plane nodes
+firewall-cmd --add-port=6443/tcp --zone=external --permanent # kube-api-server on control plane nodes
+firewall-cmd --add-port=22623/tcp --zone=internal --permanent # machine-config server
+firewall-cmd --add-service=http --zone=internal --permanent # web services hosted on worker nodes
+firewall-cmd --add-service=http --zone=external --permanent # web services hosted on worker nodes
+firewall-cmd --add-service=https --zone=internal --permanent # web services hosted on worker nodes
+firewall-cmd --add-service=https --zone=external --permanent # web services hosted on worker nodes
+firewall-cmd --add-port=9000/tcp --zone=external --permanent # HAProxy Stats
+firewall-cmd --reload
+
+setsebool -P haproxy_connect_any 1
+systemctl enable --now haproxy
+
+# Check
+systemctl status haproxy
+
+curl localhost:9000/stats
+```
 
 1. Install and configure NFS for the OpenShift Registry. It is a requirement to provide storage for the Registry, emptyDir can be specified if necessary.
 
@@ -409,6 +567,34 @@ https://github.com/ryanhay/ocp4-metal-install
    systemctl enable nfs-server rpcbind
    systemctl start nfs-server rpcbind nfs-mountd
    ```
+
+```bash
+# Quick settings
+
+# Create storage for registry
+lvcreate -n ocp_registry1 -L 100G ocp_data
+mkfs.xfs -L ocp_reg1 /dev/ocp_data/ocp_registry1
+echo "/dev/ocp_data/ocp_registry1 /shares/registry xfs defaults" >> /etc/fstab
+systemctl daemon-reload
+
+mkdir -p /shares/registry
+mount /shares/registry
+chown -R nobody:nobody /shares/registry
+chmod -R 777 /shares/registry
+
+# Continue
+echo "/shares/registry  192.168.22.0/24(rw,sync,root_squash,no_subtree_check,no_wdelay)" >> /etc/exports
+exportfs -rv
+
+firewall-cmd --zone=internal --add-service mountd --permanent
+firewall-cmd --zone=internal --add-service rpc-bind --permanent
+firewall-cmd --zone=internal --add-service nfs --permanent
+firewall-cmd --reload
+
+systemctl enable nfs-server rpcbind
+systemctl start nfs-server rpcbind nfs-mountd
+
+```
 
 ## Generate and host install files
 
@@ -486,6 +672,42 @@ https://github.com/ryanhay/ocp4-metal-install
    ```bash
    curl localhost:8080/ocp4/
    ```
+
+```bash
+# Quick settings
+
+# On localsysadmin
+ssh-keygen # rsa
+
+mkdir ~/ocp-install1
+cp -v ~/ocp4-metal-install-rh/install-config.yaml ~/install-config1.yaml
+# edit ~/install-config1.yaml with
+# pullSecret: pull-secret
+# sshKey: ~/.ssh/id_rsa.pub
+# Keep values quoted and on one line
+gedit ~/install-config1.yaml ~/.ssh/id_rsa.pub ~/ocp4-metal-install-rh/downloads/pull-secret
+cp -vf ~/install-config1.yaml ~/ocp-install1/install-config.yaml
+
+# openshift-install deletes the install-config.yaml which is why it was copied in.
+# You're better off deleting and recreating ~/ocp-install1 rather than reusing it.
+~/openshift-install create manifests --dir ~/ocp-install1
+sed -i 's/mastersSchedulable: true/mastersSchedulable: false/' ~/ocp-install1/manifests/cluster-scheduler-02-config.yml
+~/openshift-install create ignition-configs --dir ~/ocp-install1/
+
+# root
+mkdir -p /var/www/html/ocp4
+cp -Rvf ~localsysadmin/ocp-install1/* /var/www/html/ocp4/
+mkdir -p /var/www/html/ocp4/rhcos/
+cp -vf ~localsysadmin/ocp4-metal-install-rh/downloads/rhcos-4.13.5-x86_64-metal.x86_64.raw.gz /var/www/html/ocp4/rhcos/
+ln -s /var/www/html/ocp4/rhcos/rhcos-4.13.5-x86_64-metal.x86_64.raw.gz /var/www/html/ocp4/rhcos/rhcos.raw.gz
+
+chcon -Rv -t httpd_sys_content_t /var/www/html/ocp4/
+chown -Rv apache: /var/www/html/ocp4/
+chmod 755 /var/www/html/ocp4/
+
+# Check
+#Use firefox to check permissions on localhost:8080/ocp4/
+```
 
 ## Deploy OpenShift
 
