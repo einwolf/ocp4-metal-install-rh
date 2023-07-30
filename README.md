@@ -1,5 +1,11 @@
 # OpenShift 4 Bare Metal Install - User Provisioned Infrastructure (UPI)
 
+```text
+Working through Ryan Hay's OpenShift install sample.
+https://www.youtube.com/watch?v=d03xg2PKOPg
+https://github.com/ryanhay/ocp4-metal-install
+```
+
 - [OpenShift 4 Bare Metal Install - User Provisioned Infrastructure (UPI)](#openshift-4-bare-metal-install---user-provisioned-infrastructure-upi)
   - [Architecture Diagram](#architecture-diagram)
   - [Download Software](#download-software)
