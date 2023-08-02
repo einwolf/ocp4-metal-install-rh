@@ -206,7 +206,7 @@ https://mirror.openshift.com/pub/openshift-v4/dependencies/rhcos/4.13/4.13.5/rhc
    > If changes arent applied automatically you can bounce the NIC with `nmcli connection down ens224` and `nmcli connection up ens224`
 
 ```bash
-nmcli con modify ens224 ipv4.addresses 192.168.22.1
+nmcli con modify ens224 ipv4.addresses 192.168.22.1/24
 nmcli con modify ens224 ipv4.method manual
 nmcli con modify ens224 ipv4.dns-search ocp.lan
 nmcli con modify ens224 ipv4.never-default yes
@@ -399,6 +399,9 @@ mv /etc/dhcp/dhcpd.conf /etc/dhcp/dhcpd.conf.orig
 cp -v /home/localsysadmin/ocp4-metal-install-rh/dhcpd.conf /etc/dhcp/dhcpd.conf
 chmod -v 0644 /etc/dhcp/dhcpd.conf
 chown -v root:root /etc/dhcp/dhcpd.conf
+
+# Edit /etc/dhcp/dhcpd.conf with the mac addresses from the virtual machines.
+# If they don't get 192.168.22.2xx addresses dhcp is not working correctly.
 
 firewall-cmd --add-service=dhcp --zone=internal --permanent
 firewall-cmd --reload
@@ -679,34 +682,38 @@ systemctl start nfs-server rpcbind nfs-mountd
 # On localsysadmin
 ssh-keygen # rsa
 
-mkdir ~/ocp-install1
-cp -v ~/ocp4-metal-install-rh/install-config.yaml ~/install-config1.yaml
-# edit ~/install-config1.yaml with
+mkdir ~/ocp-install
+cp -v ~/ocp4-metal-install-rh/install-config.yaml ~/ocp-install/install-config1.yaml
+# edit ~/ocp-install/install-config1.yaml with
 # pullSecret: pull-secret
 # sshKey: ~/.ssh/id_rsa.pub
 # Keep values quoted and on one line
-gedit ~/install-config1.yaml ~/.ssh/id_rsa.pub ~/ocp4-metal-install-rh/downloads/pull-secret
-cp -vf ~/install-config1.yaml ~/ocp-install1/install-config.yaml
+gedit ~/ocp-install/install-config1.yaml ~/.ssh/id_rsa.pub ~/ocp4-metal-install-rh/downloads/pull-secret
 
 # openshift-install deletes the install-config.yaml which is why it was copied in.
-# You're better off deleting and recreating ~/ocp-install1 rather than reusing it.
-~/openshift-install create manifests --dir ~/ocp-install1
+# You're better off deleting and recreating ocp-install1 rather than reusing it.
+cd ocp-install
+rm -rfv ocp-install1
+mkdir ocp-install1
+# Make sure it's named install-config.yaml
+cp -vf install-config1.yaml ocp-install1/install-config.yaml
+./openshift-install create manifests --dir ./ocp-install1
 sed -i 's/mastersSchedulable: true/mastersSchedulable: false/' ~/ocp-install1/manifests/cluster-scheduler-02-config.yml
-~/openshift-install create ignition-configs --dir ~/ocp-install1/
+./openshift-install create ignition-configs --dir ./ocp-install1
 
 # root
+rm -rfv /var/www/html/ocp4
 mkdir -p /var/www/html/ocp4
-cp -Rvf ~localsysadmin/ocp-install1/* /var/www/html/ocp4/
+cp -Rvf ~localsysadmin/ocp-install/ocp-install1/* /var/www/html/ocp4/
 mkdir -p /var/www/html/ocp4/rhcos/
-cp -vf ~localsysadmin/ocp4-metal-install-rh/downloads/rhcos-4.13.5-x86_64-metal.x86_64.raw.gz /var/www/html/ocp4/rhcos/
-ln -s /var/www/html/ocp4/rhcos/rhcos-4.13.5-x86_64-metal.x86_64.raw.gz /var/www/html/ocp4/rhcos/rhcos.raw.gz
+cp -vf ~localsysadmin/ocp4-metal-install-rh/downloads/rhcos-4.13.5-x86_64-metal.x86_64.raw.gz /var/www/html/ocp4/rhcos
 
 chcon -Rv -t httpd_sys_content_t /var/www/html/ocp4/
 chown -Rv apache: /var/www/html/ocp4/
 chmod 755 /var/www/html/ocp4/
 
 # Check
-#Use firefox to check permissions on localhost:8080/ocp4/
+# Use firefox to check permissions on localhost:8080/ocp4/
 ```
 
 ## Deploy OpenShift
@@ -728,6 +735,19 @@ chmod 755 /var/www/html/ocp4/
    # Or if you waited for it boot, use the following command then just reboot after it finishes and make sure you remove the attached .iso
    sudo coreos-installer install /dev/sda -u http://192.168.22.1:8080/ocp4/rhcos -I http://192.168.22.1:8080/ocp4/master.ign --insecure --insecure-ignition
    ```
+
+```bash
+# Quick settings
+# govc typer edition
+# Eh, govc vm.keystrokes is sending weird stuff for _ : and others
+# Also tried ansible. Same problem.
+# user_login -> useR-login
+
+# Edit the boot entry with e and add to the linux line.
+
+# Bootstrap Node - ocp-bootstrap
+coreos.inst.install_dev=/dev/sda coreos.inst.image_url=http://192.168.22.1:8080/ocp4/rhcos coreos.inst.insecure=yes coreos.inst.ignition_url=http://192.168.22.1:8080/ocp4/bootstrap.ign
+```
 
 1. Power on the ocp-w-\# hosts and select 'Tab' to enter boot configuration. Enter the following configuration:
 
