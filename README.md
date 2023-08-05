@@ -13,6 +13,22 @@ OCP 4.5? 4.9? -> 4.13.5
 ocp-svc.ocp.lan has second disk on /data1 for ocp storage
 ```
 
+name | cores | memory | disk
+--- | --- | --- | ---
+ocp4c1-services | 4 | 16 GB | 120 GB, 200 GB
+ocp4c1-bootstrap | 4 | 16 GB | 120 GB
+ocp4c1-control1 | 4 | 16 GB | 120 GB
+ocp4c1-control2 | 4 | 16 GB | 120 GB
+ocp4c1-control3 | 4 | 16 GB | 120 GB
+ocp4c1-worker1 | 4 | 16 GB | 120 GB
+ocp4c1-worker2 | 4 | 16 GB | 120 GB
+ocp4c1-worker3 | 4 | 16 GB | 120 GB
+
+Overprovisioning
+
+Tried to install on my 4 core 128 GB server. Made it to 95% installed after 60 min.
+Well after the 40 min wait-for-install limit. Shut it down.
+
 - [OpenShift 4 Bare Metal Install - User Provisioned Infrastructure (UPI)](#openshift-4-bare-metal-install---user-provisioned-infrastructure-upi)
   - [Architecture Diagram](#architecture-diagram)
   - [Download Software](#download-software)
@@ -705,7 +721,6 @@ sed -i 's/mastersSchedulable: true/mastersSchedulable: false/' ~/ocp-install1/ma
 rm -rfv /var/www/html/ocp4
 mkdir -p /var/www/html/ocp4
 cp -Rvf ~localsysadmin/ocp-install/ocp-install1/* /var/www/html/ocp4/
-mkdir -p /var/www/html/ocp4/rhcos/
 cp -vf ~localsysadmin/ocp4-metal-install-rh/downloads/rhcos-4.13.5-x86_64-metal.x86_64.raw.gz /var/www/html/ocp4/rhcos
 
 chcon -Rv -t httpd_sys_content_t /var/www/html/ocp4/
@@ -766,7 +781,7 @@ coreos.inst.image_url=http://192.168.22.1:8080/ocp4/rhcos
 coreos.inst.ignition_url=http://192.168.22.1:8080/ocp4/master.ign
 
 # Each of the Worker Nodes - ocp-w-\#
-coreos.inst.install_dev=sda coreos.inst.insecure=yes
+coreos.inst.install_dev=/dev/sda coreos.inst.insecure=yes
 coreos.inst.image_url=http://192.168.22.1:8080/ocp4/rhcos
 coreos.inst.ignition_url=http://192.168.22.1:8080/ocp4/worker.ign
 ```
@@ -792,8 +807,40 @@ sudo coreos-installer install /dev/sda --insecure --insecure-ignition
 
 ```bash
 # Monitor
+# using mastersSchedulable: true
 ./openshift-install --dir ./ocp-install1 wait-for bootstrap-complete --log-level=debug
+
+[localsysadmin@ocp-svc ocp-install]$ ./openshift-install --dir ./ocp-install1 wait-for bootstrap-complete --log-level=debug
+DEBUG OpenShift Installer 4.13.5                   
+DEBUG Built from commit 953477ffa0d19ef8a995258042af8099300a2385 
+INFO Waiting up to 20m0s (until 7:00PM) for the Kubernetes API at https://api.lab.ocp.lan:6443... 
+DEBUG Loading Agent Config...                      
+DEBUG Still waiting for the Kubernetes API: Get "https://api.lab.ocp.lan:6443/version": EOF 
+INFO API v1.26.6+f245ced up                       
+DEBUG Loading Install Config...                    
+DEBUG   Loading SSH Key...                         
+DEBUG   Loading Base Domain...                     
+DEBUG     Loading Platform...                      
+DEBUG   Loading Cluster Name...                    
+DEBUG     Loading Base Domain...                   
+DEBUG     Loading Platform...                      
+DEBUG   Loading Networking...                      
+DEBUG     Loading Platform...                      
+DEBUG   Loading Pull Secret...                     
+DEBUG   Loading Platform...                        
+DEBUG Using Install Config loaded from state file  
+INFO Waiting up to 30m0s (until 7:13PM) for bootstrapping to complete... 
+DEBUG Bootstrap status: complete                   
+INFO It is now safe to remove the bootstrap resources 
+DEBUG Time elapsed per stage:                      
+DEBUG Bootstrap Complete: 23m0s                    
+DEBUG                API: 2m51s                    
+INFO Time elapsed: 23m0s                          
+
 ./openshift-install --dir ./ocp-install1 wait-for install-complete --log-level=debug
+```
+
+```bash
 ```
 
 ## Monitor the Bootstrap Process
@@ -862,6 +909,77 @@ sudo coreos-installer install /dev/sda --insecure --insecure-ignition
    ```bash
    watch -n5 oc get nodes
    ```
+
+```bash
+# (bootstrap was removed from haproxy.cfg and shut off)
+export KUBECONFIG=~localsysadmin/ocp-install/ocp-install1/auth/kubeconfig
+oc get nodes
+
+[localsysadmin@ocp-svc ocp-install]$ oc get nodes
+NAME                   STATUS   ROLES                         AGE   VERSION
+ocp-cp-1.lab.ocp.lan   Ready    control-plane,master,worker   39m   v1.26.6+f245ced
+ocp-cp-2.lab.ocp.lan   Ready    control-plane,master,worker   37m   v1.26.6+f245ced
+ocp-cp-3.lab.ocp.lan   Ready    control-plane,master,worker   34m   v1.26.6+f245ced
+
+oc get csr
+[localsysadmin@ocp-svc ocp-install]$ oc get csr
+NAME                                             AGE     SIGNERNAME                                    REQUESTOR                                                                         REQUESTEDDURATION   CONDITION
+csr-6f2p4                                        39m     kubernetes.io/kubelet-serving                 system:node:ocp-cp-1.lab.ocp.lan                                                  <none>              Approved,Issued
+csr-8gt6p                                        38m     kubernetes.io/kube-apiserver-client-kubelet   system:serviceaccount:openshift-machine-config-operator:node-bootstrapper         <none>              Approved,Issued
+csr-b5z52                                        3m23s   kubernetes.io/kube-apiserver-client-kubelet   system:serviceaccount:openshift-machine-config-operator:node-bootstrapper         <none>              Pending
+csr-db65k                                        35m     kubernetes.io/kubelet-serving                 system:node:ocp-cp-3.lab.ocp.lan                                                  <none>              Approved,Issued
+csr-dwbp5                                        103s    kubernetes.io/kube-apiserver-client-kubelet   system:serviceaccount:openshift-machine-config-operator:node-bootstrapper         <none>              Pending
+csr-kllwm                                        38m     kubernetes.io/kubelet-serving                 system:node:ocp-cp-2.lab.ocp.lan                                                  <none>              Approved,Issued
+csr-vnjp2                                        35m     kubernetes.io/kube-apiserver-client-kubelet   system:serviceaccount:openshift-machine-config-operator:node-bootstrapper         <none>              Approved,Issued
+csr-wrrd8                                        40m     kubernetes.io/kube-apiserver-client-kubelet   system:serviceaccount:openshift-machine-config-operator:node-bootstrapper         <none>              Approved,Issued
+system:openshift:openshift-authenticator-lc5j6   37m     kubernetes.io/kube-apiserver-client           system:serviceaccount:openshift-authentication-operator:authentication-operator   <none>              Approved,Issued
+system:openshift:openshift-monitoring-krt2b      35m     kubernetes.io/kube-apiserver-client           system:serviceaccount:openshift-monitoring:cluster-monitoring-operator            <none>              Approved,Issued
+
+oc get csr -o go-template='{{range .items}}{{if not .status}}{{.metadata.name}}{{"\n"}}{{end}}{{end}}' | xargs oc adm certificate approve
+[localsysadmin@ocp-svc ocp-install]$ oc get csr -o go-template='{{range .items}}{{if not .status}}{{.metadata.name}}{{"\n"}}{{end}}{{end}}' | xargs oc adm certificate approve
+certificatesigningrequest.certificates.k8s.io/csr-b5z52 approved
+certificatesigningrequest.certificates.k8s.io/csr-dwbp5 approved
+
+[localsysadmin@ocp-svc ocp-install]$ oc get csr
+NAME                                             AGE     SIGNERNAME                                    REQUESTOR                                                                         REQUESTEDDURATION   CONDITION
+csr-6f2p4                                        41m     kubernetes.io/kubelet-serving                 system:node:ocp-cp-1.lab.ocp.lan                                                  <none>              Approved,Issued
+csr-8gt6p                                        40m     kubernetes.io/kube-apiserver-client-kubelet   system:serviceaccount:openshift-machine-config-operator:node-bootstrapper         <none>              Approved,Issued
+csr-b5z52                                        5m6s    kubernetes.io/kube-apiserver-client-kubelet   system:serviceaccount:openshift-machine-config-operator:node-bootstrapper         <none>              Approved,Issued
+csr-db65k                                        37m     kubernetes.io/kubelet-serving                 system:node:ocp-cp-3.lab.ocp.lan                                                  <none>              Approved,Issued
+csr-dwbp5                                        3m26s   kubernetes.io/kube-apiserver-client-kubelet   system:serviceaccount:openshift-machine-config-operator:node-bootstrapper         <none>              Approved,Issued
+csr-hbmfg                                        19s     kubernetes.io/kubelet-serving                 system:node:ocp-w-1.lab.ocp.lan                                                   <none>              Pending
+csr-kllwm                                        40m     kubernetes.io/kubelet-serving                 system:node:ocp-cp-2.lab.ocp.lan                                                  <none>              Approved,Issued
+csr-v9dtz                                        25s     kubernetes.io/kubelet-serving                 system:node:ocp-w-2.lab.ocp.lan                                                   <none>              Pending
+csr-vnjp2                                        37m     kubernetes.io/kube-apiserver-client-kubelet   system:serviceaccount:openshift-machine-config-operator:node-bootstrapper         <none>              Approved,Issued
+csr-wrrd8                                        42m     kubernetes.io/kube-apiserver-client-kubelet   system:serviceaccount:openshift-machine-config-operator:node-bootstrapper         <none>              Approved,Issued
+system:openshift:openshift-authenticator-lc5j6   39m     kubernetes.io/kube-apiserver-client           system:serviceaccount:openshift-authentication-operator:authentication-operator   <none>              Approved,Issued
+system:openshift:openshift-monitoring-krt2b      37m     kubernetes.io/kube-apiserver-client           system:serviceaccount:openshift-monitoring:cluster-monitoring-operator            <none>              Approved,Issued
+
+[localsysadmin@ocp-svc ocp-install]$ oc get csr -o go-template='{{range .items}}{{if not .status}}{{.metadata.name}}{{"\n"}}{{end}}{{end}}' | xargs oc adm certificate approve
+certificatesigningrequest.certificates.k8s.io/csr-hbmfg approved
+certificatesigningrequest.certificates.k8s.io/csr-v9dtz approved
+
+[localsysadmin@ocp-svc ocp-install]$ oc get csr
+NAME                                             AGE     SIGNERNAME                                    REQUESTOR                                                                         REQUESTEDDURATION   CONDITION
+csr-6f2p4                                        42m     kubernetes.io/kubelet-serving                 system:node:ocp-cp-1.lab.ocp.lan                                                  <none>              Approved,Issued
+csr-8gt6p                                        41m     kubernetes.io/kube-apiserver-client-kubelet   system:serviceaccount:openshift-machine-config-operator:node-bootstrapper         <none>              Approved,Issued
+csr-b5z52                                        5m50s   kubernetes.io/kube-apiserver-client-kubelet   system:serviceaccount:openshift-machine-config-operator:node-bootstrapper         <none>              Approved,Issued
+csr-db65k                                        37m     kubernetes.io/kubelet-serving                 system:node:ocp-cp-3.lab.ocp.lan                                                  <none>              Approved,Issued
+csr-dwbp5                                        4m10s   kubernetes.io/kube-apiserver-client-kubelet   system:serviceaccount:openshift-machine-config-operator:node-bootstrapper         <none>              Approved,Issued
+csr-hbmfg                                        63s     kubernetes.io/kubelet-serving                 system:node:ocp-w-1.lab.ocp.lan                                                   <none>              Approved,Issued
+csr-kllwm                                        40m     kubernetes.io/kubelet-serving                 system:node:ocp-cp-2.lab.ocp.lan                                                  <none>              Approved,Issued
+csr-v9dtz                                        69s     kubernetes.io/kubelet-serving                 system:node:ocp-w-2.lab.ocp.lan                                                   <none>              Approved,Issued
+csr-vnjp2                                        37m     kubernetes.io/kube-apiserver-client-kubelet   system:serviceaccount:openshift-machine-config-operator:node-bootstrapper         <none>              Approved,Issued
+csr-wrrd8                                        42m     kubernetes.io/kube-apiserver-client-kubelet   system:serviceaccount:openshift-machine-config-operator:node-bootstrapper         <none>              Approved,Issued
+system:openshift:openshift-authenticator-lc5j6   39m     kubernetes.io/kube-apiserver-client           system:serviceaccount:openshift-authentication-operator:authentication-operator   <none>              Approved,Issued
+system:openshift:openshift-monitoring-krt2b      37m     kubernetes.io/kube-apiserver-client           system:servic
+eaccount:openshift-monitoring:cluster-monitoring-operator            <none>              Approved,Issued
+
+[localsysadmin@ocp-svc ocp-install]$ oc get csr -o go-template='{{range .items}}{{if not .status}}{{.metadata.name}}{{"\n"}}{{end}}{{end}}' | xargs oc adm certificate approve
+error: one or more CSRs must be specified as <name> or -f <filename>
+
+(all approved)
+```
 
 ## Configure storage for the Image Registry
 
